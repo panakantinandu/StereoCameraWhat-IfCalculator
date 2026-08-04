@@ -1,4 +1,5 @@
-// Supported machine-vision resolution list for the Stereo Camera What-If Calculator.
+// Supported machine-vision resolution/camera list for the Stereo Camera What-If
+// Calculator.
 //
 // *** ALL ENTRIES IN THIS FILE ARE PLACEHOLDERS. ***
 // These are common industrial machine-vision sensor resolutions used only to
@@ -9,15 +10,24 @@
 // horizontalPixels / verticalPixels are stored as separate integers (never
 // parsed from `name`). `megapixels` is derived, not hand-entered, to avoid
 // drift between the name, the pixel counts, and the displayed MP figure.
+//
+// sensorWidthMm/sensorHeightMm/pixelPitchUm/manufacturer/model/priceUsd are
+// forward-looking schema growth for a real camera catalog -- all optional, so
+// existing entries don't need to supply them until a real one is sourced.
 
-import type { ResolutionConfig } from "./types";
+import type { ResolutionConfig } from "../types";
+
+type OptionalCameraFields = Partial<
+  Pick<ResolutionConfig, "sensorWidthMm" | "sensorHeightMm" | "pixelPitchUm" | "manufacturer" | "model" | "priceUsd">
+>;
 
 function resolution(
   name: string,
   horizontalPixels: number,
   verticalPixels: number,
   priority: number,
-  active: boolean
+  active: boolean,
+  extra: OptionalCameraFields = {}
 ): ResolutionConfig {
   return {
     name,
@@ -26,6 +36,7 @@ function resolution(
     megapixels: (horizontalPixels * verticalPixels) / 1e6,
     priority,
     active,
+    ...extra,
   };
 }
 

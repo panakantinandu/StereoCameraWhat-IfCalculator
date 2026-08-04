@@ -18,7 +18,8 @@ export interface PresetConfig {
   disparityUncertaintyPx: number;
   /** Safety factor (S), must be >= 1. */
   safetyFactor: number;
-  maxSupportedDisparityPx: number;
+  /** Max supported disparity SPAN (d_near - d_far) the stereo matcher can search across the part's depth. */
+  maxDisparityRangePx: number;
   /** Usable fraction of the horizontal sensor/frame, 0 < x <= 1. */
   usableHorizontalFraction: number;
   /** Usable fraction of the vertical sensor/frame, 0 < x <= 1. */
@@ -29,7 +30,9 @@ export interface PresetConfig {
   formulaVersion: string;
 }
 
-/** One entry in the supported machine-vision resolution list. */
+/** One entry in the supported machine-vision resolution list (lib/cameraDatabase).
+ * The extra fields are forward-looking schema growth for a real camera catalog --
+ * all optional/nullable so existing placeholder entries don't need to supply them. */
 export interface ResolutionConfig {
   name: string;
   horizontalPixels: number;
@@ -38,18 +41,26 @@ export interface ResolutionConfig {
   megapixels: number;
   priority: number;
   active: boolean;
+  sensorWidthMm?: number | null;
+  sensorHeightMm?: number | null;
+  pixelPitchUm?: number | null;
+  manufacturer?: string | null;
+  model?: string | null;
+  priceUsd?: number | null;
 }
 
 /** Raw, possibly-invalid user input straight from the form (strings, so blanks are representable).
  * accuracyPlusMm / accuracyMinusMm are always entered as positive magnitudes -- the sign is implied
  * by which bound the field represents, not typed by the user. When the "symmetric tolerance" toggle
- * is on, the UI mirrors one typed value into both fields before calling validateInputs/calculate. */
+ * is on, the UI mirrors one typed value into both fields before calling validateInputs/calculate.
+ * maxWorkingDistanceMm is the optional "Advanced (engineering only)" input -- leave blank to skip it. */
 export interface RawCalculatorInputs {
   partLengthMm: string;
   partWidthMm: string;
   partDepthMm: string;
   accuracyPlusMm: string;
   accuracyMinusMm: string;
+  maxWorkingDistanceMm: string;
 }
 
 /** Parsed, validated numeric inputs. */
@@ -61,6 +72,10 @@ export interface CalculatorInputs {
   accuracyPlus: number;
   /** How far the measured depth is allowed to read CLOSER than actual, mm. Always a positive magnitude. */
   accuracyMinus: number;
+  /** Optional extra ceiling on top of (not instead of) each preset's own maxNearDistanceMm --
+   * effective max = min(preset.maxNearDistanceMm, maxWorkingDistanceMm ?? Infinity). Undefined
+   * when the user left the advanced field blank. */
+  maxWorkingDistanceMm?: number;
 }
 
 export type ErrorCode =
@@ -76,10 +91,11 @@ export type ErrorCode =
   | "ERR-09a"
   | "ERR-09b"
   | "ERR-10"
-  | "ERR-11";
+  | "ERR-11"
+  | "ERR-12";
 
 export interface FieldError {
-  field: "partLengthMm" | "partWidthMm" | "partDepthMm" | "accuracyPlusMm" | "accuracyMinusMm";
+  field: "partLengthMm" | "partWidthMm" | "partDepthMm" | "accuracyPlusMm" | "accuracyMinusMm" | "maxWorkingDistanceMm";
   code: ErrorCode;
   message: string;
 }

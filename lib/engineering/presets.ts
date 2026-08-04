@@ -10,8 +10,12 @@
 // This file is NOT user-editable from the UI by design (see spec: "editable only
 // in code/config, never in the UI"). To change a preset, edit this file directly
 // and get it re-reviewed.
+//
+// Presets are NOT derivable from part geometry -- see the "Why presets aren't
+// derived from part size" note in the README before proposing to replace this
+// file with a part-size-ratio formula.
 
-import type { PresetConfig } from "./types";
+import type { PresetConfig } from "../types";
 
 export const PRESETS: PresetConfig[] = [
   {
@@ -25,7 +29,7 @@ export const PRESETS: PresetConfig[] = [
     maxNearDistanceMm: 600, // TBD — pending Gary/engineering approval, see spec Section 11.1
     disparityUncertaintyPx: 0.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
     safetyFactor: 1.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
-    maxSupportedDisparityPx: 900, // TBD — pending Gary/engineering approval, see spec Section 11.1
+    maxDisparityRangePx: 128, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableHorizontalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableVerticalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     pixelPitchUm: 3.45, // TBD — pending Gary/engineering approval, see spec Section 11.1
@@ -43,7 +47,7 @@ export const PRESETS: PresetConfig[] = [
     maxNearDistanceMm: 1500, // TBD — pending Gary/engineering approval, see spec Section 11.1
     disparityUncertaintyPx: 0.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
     safetyFactor: 2, // TBD — pending Gary/engineering approval, see spec Section 11.1
-    maxSupportedDisparityPx: 1100, // TBD — pending Gary/engineering approval, see spec Section 11.1
+    maxDisparityRangePx: 192, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableHorizontalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableVerticalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     pixelPitchUm: 3.45, // TBD — pending Gary/engineering approval, see spec Section 11.1
@@ -61,7 +65,7 @@ export const PRESETS: PresetConfig[] = [
     maxNearDistanceMm: 4000, // TBD — pending Gary/engineering approval, see spec Section 11.1
     disparityUncertaintyPx: 0.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
     safetyFactor: 2, // TBD — pending Gary/engineering approval, see spec Section 11.1
-    maxSupportedDisparityPx: 1500, // TBD — pending Gary/engineering approval, see spec Section 11.1
+    maxDisparityRangePx: 256, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableHorizontalFraction: 0.85, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableVerticalFraction: 0.85, // TBD — pending Gary/engineering approval, see spec Section 11.1
     pixelPitchUm: 3.45, // TBD — pending Gary/engineering approval, see spec Section 11.1

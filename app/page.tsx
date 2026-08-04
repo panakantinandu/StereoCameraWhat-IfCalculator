@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { calculate } from "@/lib/calculator";
-import { PRESETS } from "@/lib/settings";
-import { RESOLUTIONS } from "@/lib/resolutions";
-import type { CalculationResult, FieldError, RawCalculatorInputs } from "@/lib/types";
+import { calculate } from "@/lib/recommendation";
+import { PRESETS } from "@/lib/engineering";
+import { RESOLUTIONS } from "@/lib/cameraDatabase";
+import type { CalculationResult, FieldError, PresetEvaluation, RawCalculatorInputs } from "@/lib/types";
 
 const EMPTY_INPUTS: RawCalculatorInputs = {
   partLengthMm: "",
@@ -12,6 +12,7 @@ const EMPTY_INPUTS: RawCalculatorInputs = {
   partDepthMm: "",
   accuracyPlusMm: "",
   accuracyMinusMm: "",
+  maxWorkingDistanceMm: "",
 };
 
 const DISCLAIMER =
@@ -32,6 +33,38 @@ function fmtPlusMinus(plus: number | undefined, minus: number | undefined, decim
 
 function fieldError(errors: FieldError[] | undefined, field: FieldError["field"]): string | undefined {
   return errors?.find((e) => e.field === field)?.message;
+}
+
+/** Plain-English, jargon-free one-liner for the customer-facing tier, e.g.
+ * "Recommended: 3072x2048 camera at ~850mm working distance". */
+function plainSummary(result: CalculationResult): string | undefined {
+  if (result.status !== "PASS" || !result.recommended?.selectedResolution) return undefined;
+  const res = result.recommended.selectedResolution;
+  const zNear = result.recommended.computation.Z_near;
+  const distance = zNear !== undefined ? `~${Math.round(zNear)}mm working distance` : "an unspecified working distance";
+  return `Recommended: ${res.horizontalPixels}×${res.verticalPixels} camera at ${distance}`;
+}
+
+/** Physical sensor dimensions, when the selected camera's database entry has them
+ * (lib/cameraDatabase's optional sensorWidthMm/sensorHeightMm -- schema growth,
+ * not populated for the current placeholder entries). */
+function sensorSizeText(winner: PresetEvaluation): string {
+  const res = winner.selectedResolution;
+  if (res?.sensorWidthMm == null || res?.sensorHeightMm == null) return "Not specified in camera database";
+  return `${fmt(res.sensorWidthMm, 2)} x ${fmt(res.sensorHeightMm, 2)} mm`;
+}
+
+/** Ground sample distance: mm of the part each pixel represents at the framed
+ * distance, for the actual selected camera (not just the theoretical minimum
+ * requirement). Pure display-layer derivation from already-computed values --
+ * does not feed back into any pass/fail check. */
+function gsdText(winner: PresetEvaluation): string {
+  const res = winner.selectedResolution;
+  const { W_req, H_req } = winner.computation;
+  if (!res || W_req === undefined || H_req === undefined) return "—";
+  const gsdH = W_req / res.horizontalPixels;
+  const gsdV = H_req / res.verticalPixels;
+  return `${fmt(gsdH, 4)} / ${fmt(gsdV, 4)} mm/px`;
 }
 
 function OrientationDiagram() {
@@ -300,6 +333,31 @@ export default function Page() {
             </p>
           </div>
 
+          <details className="advanced-section">
+            <summary>Advanced (engineering only)</summary>
+            <div className="field" style={{ marginTop: 10 }}>
+              <label htmlFor="maxWorkingDistanceMm">Maximum Working Distance (mm), optional</label>
+              <div className="input-row">
+                <input
+                  id="maxWorkingDistanceMm"
+                  type="number"
+                  min="0"
+                  className={fieldError(errors, "maxWorkingDistanceMm") ? "has-error" : ""}
+                  value={rawInputs.maxWorkingDistanceMm}
+                  onChange={(e) => updateField("maxWorkingDistanceMm", e.target.value)}
+                />
+                <span className="unit">mm</span>
+              </div>
+              {fieldError(errors, "maxWorkingDistanceMm") && (
+                <div className="error-text">{fieldError(errors, "maxWorkingDistanceMm")}</div>
+              )}
+              <p className="hint" style={{ marginTop: 4 }}>
+                Narrows the search on top of each rig&apos;s own mechanical limit (e.g. &quot;we only have 1.5m of
+                clearance in this cell&quot;) -- it never loosens a preset&apos;s own limit.
+              </p>
+            </div>
+          </details>
+
           <div className="button-row">
             <button type="button" className="primary" onClick={handleCalculate}>
               Calculate
@@ -321,128 +379,117 @@ export default function Page() {
             <div className={`result-card${isStale ? " stale" : ""}`}>
               {isStale && <div className="stale-banner">Inputs changed — press Calculate to refresh this result</div>}
 
+              {/* ---------- Tier 1: always visible, meeting-ready ---------- */}
               <StatusBadge status={result.status} />
 
               {result.status === "PASS" && winner && (
                 <>
+                  <p className="plain-summary">{plainSummary(result)}</p>
                   <div className="result-grid">
                     <div className="result-item">
-                      <div className="label">Recommended preset</div>
-                      <div className="value">{winner.presetName}</div>
-                    </div>
-                    <div className="result-item">
-                      <div className="label">Selected resolution</div>
+                      <div className="label">Recommended camera</div>
                       <div className="value">
                         {winner.selectedResolution?.name} ({fmt(winner.selectedResolution?.megapixels, 2)} MP)
                       </div>
-                    </div>
-                    <div className="result-item">
-                      <div className="label">Baseline</div>
-                      <div className="value">{fmt(winner.baselineMm, 1)} mm</div>
-                    </div>
-                    <div className="result-item">
-                      <div className="label">Near / Center / Far distance</div>
-                      <div className="value">
-                        {fmt(c?.Z_near)} / {fmt(c?.Z_center)} / {fmt(c?.Z_far)} mm
-                      </div>
-                    </div>
-                    <div className="result-item">
-                      <div className="label">Required focal length</div>
-                      <div className="value">
-                        {fmt(c?.f_req)} px
-                        {c?.f_mm !== undefined ? ` (${fmt(c.f_mm, 2)} mm)` : " — Select sensor first"}
-                      </div>
-                    </div>
-                    <div className="result-item">
-                      <div className="label">Predicted theoretical depth error</div>
-                      <div className="value">{fmtPlusMinus(c?.E_Z_plus, c?.E_Z_minus)}</div>
-                    </div>
-                    <div className="result-item">
-                      <div className="label">Safety-adjusted depth error</div>
-                      <div className="value">{fmtPlusMinus(c?.E_safe_plus, c?.E_safe_minus)}</div>
                     </div>
                   </div>
                 </>
               )}
 
               {(result.status === "FAIL" || result.status === "NO VALID CONFIGURATION") && (
-                <div className="reason-box">
-                  {result.errorMessage}
-                  {result.status === "NO VALID CONFIGURATION" && (
-                    <ul>
-                      {result.evaluations.map((e) => (
-                        <li key={e.presetName}>
-                          {e.presetName}: {e.errorMessage ?? "unknown reason"}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-
-              {result.status === "PASS" && winner && (
-                <details className="tech-details">
-                  <summary>Technical details</summary>
-                  <table className="tech-table">
-                    <tbody>
-                      <tr>
-                        <th>Formula version</th>
-                        <td>{winner.formulaVersion}</td>
-                      </tr>
-                      <tr>
-                        <th>Near distance (Z_near)</th>
-                        <td>{fmt(c?.Z_near)} mm</td>
-                      </tr>
-                      <tr>
-                        <th>Far distance (Z_far)</th>
-                        <td>{fmt(c?.Z_far)} mm</td>
-                      </tr>
-                      <tr>
-                        <th>Near disparity (d_near)</th>
-                        <td>{fmt(c?.d_near)} px</td>
-                      </tr>
-                      <tr>
-                        <th>Far disparity (d_far)</th>
-                        <td>{fmt(c?.d_far)} px</td>
-                      </tr>
-                      <tr>
-                        <th>Required pixels (N_x_req x N_y_req)</th>
-                        <td>
-                          {c?.N_x_req ?? "—"} x {c?.N_y_req ?? "—"}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  {result.evaluations.length > 1 && (
-                    <>
-                      <p style={{ marginTop: 12, marginBottom: 4, fontWeight: 600, fontSize: "0.85rem" }}>
-                        All evaluated presets
-                      </p>
-                      <table className="preset-audit-table">
-                        <thead>
-                          <tr>
-                            <th>Preset</th>
-                            <th>Priority</th>
-                            <th>Result</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {result.evaluations.map((e) => (
-                            <tr key={e.presetName}>
-                              <td>{e.presetName}</td>
-                              <td>{e.priority}</td>
-                              <td>{e.passed ? "PASS" : `${e.errorCode}: ${e.errorMessage}`}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </>
-                  )}
-                </details>
+                <div className="reason-box">{result.errorMessage}</div>
               )}
 
               <p className="disclaimer">{DISCLAIMER}</p>
+
+              {/* ---------- Tier 2: collapsed engineering details ---------- */}
+              {result.evaluations.length > 0 && (
+                <details className="tech-details">
+                  <summary>Show engineering details</summary>
+
+                  {result.status === "PASS" && winner && (
+                    <table className="tech-table">
+                      <tbody>
+                        <tr>
+                          <th>Preset used</th>
+                          <td>{winner.presetName}</td>
+                        </tr>
+                        <tr>
+                          <th>Formula version</th>
+                          <td>{winner.formulaVersion}</td>
+                        </tr>
+                        <tr>
+                          <th>Near / Far distance</th>
+                          <td>
+                            {fmt(c?.Z_near)} / {fmt(c?.Z_far)} mm
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>Baseline</th>
+                          <td>{fmt(winner.baselineMm, 1)} mm</td>
+                        </tr>
+                        <tr>
+                          <th>Required focal length</th>
+                          <td>
+                            {fmt(c?.f_req)} px
+                            {c?.f_mm !== undefined ? ` (${fmt(c.f_mm, 2)} mm)` : " — Select sensor first"}
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>Near / Far disparity</th>
+                          <td>
+                            {fmt(c?.d_near)} / {fmt(c?.d_far)} px
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>Required pixels (N_x_req x N_y_req)</th>
+                          <td>
+                            {c?.N_x_req ?? "—"} x {c?.N_y_req ?? "—"}
+                          </td>
+                        </tr>
+                        <tr>
+                          <th>Sensor size</th>
+                          <td>{sensorSizeText(winner)}</td>
+                        </tr>
+                        <tr>
+                          <th>GSD (H / V)</th>
+                          <td>{gsdText(winner)}</td>
+                        </tr>
+                        <tr>
+                          <th>Predicted theoretical depth error</th>
+                          <td>{fmtPlusMinus(c?.E_Z_plus, c?.E_Z_minus)}</td>
+                        </tr>
+                        <tr>
+                          <th>Safety-adjusted depth error</th>
+                          <td>{fmtPlusMinus(c?.E_safe_plus, c?.E_safe_minus)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  )}
+
+                  <p style={{ marginTop: 12, marginBottom: 4, fontWeight: 600, fontSize: "0.85rem" }}>
+                    All evaluated presets
+                  </p>
+                  <table className="preset-audit-table">
+                    <thead>
+                      <tr>
+                        <th>Preset</th>
+                        <th>Priority</th>
+                        <th>Result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.evaluations.map((e) => (
+                        <tr key={e.presetName}>
+                          <td>{e.presetName}</td>
+                          <td>{e.priority}</td>
+                          <td>{e.passed ? "PASS" : `${e.errorCode}: ${e.errorMessage}`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </details>
+              )}
             </div>
           )}
         </section>

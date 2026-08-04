@@ -1,20 +1,14 @@
 import { describe, expect, it } from "vitest";
-import {
-  calculate,
-  checkDepthAccuracy,
-  evaluatePreset,
-  isPresetConfigValid,
-  pickRecommended,
-  runCalculation,
-  validateInputs,
-} from "./calculator";
+import { checkDepthAccuracy, isPresetConfigValid, pickRecommended, PRESETS } from "../engineering";
+import { RESOLUTIONS } from "../cameraDatabase";
 import type {
   CalculatorInputs,
   PresetConfig,
   PresetEvaluation,
   RawCalculatorInputs,
   ResolutionConfig,
-} from "./types";
+} from "../types";
+import { calculate, evaluatePreset, runCalculation, validateInputs } from "./index";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -23,7 +17,7 @@ import type {
 // framing margin, 100% usable fraction) so the expected results can be hand
 // verified against spec Sections 5-6 without a calculator, then cross-checked
 // against the implementation below. They are test fixtures only, unrelated to
-// the placeholder presets in lib/settings.ts.
+// the placeholder presets in lib/engineering/presets.ts.
 // ---------------------------------------------------------------------------
 
 const basePreset: PresetConfig = {
@@ -37,7 +31,7 @@ const basePreset: PresetConfig = {
   maxNearDistanceMm: 1000,
   disparityUncertaintyPx: 1,
   safetyFactor: 2,
-  maxSupportedDisparityPx: 1000,
+  maxDisparityRangePx: 1000,
   usableHorizontalFraction: 1,
   usableVerticalFraction: 1,
   pixelPitchUm: 3.45,
@@ -56,9 +50,9 @@ const baseResolutions: ResolutionConfig[] = [
 // N_x_req=1006, N_y_req=503, d_near=251.5, d_far=167.667. Symmetric
 // (accuracyPlus == accuracyMinus == 3.6) so f_req_plus == f_req_minus == 503,
 // and E_safe_plus lands exactly on 3.6 (the old formula's E_safe, boundary
-// case -- see E_SAFE_EPSILON comment in calculator.ts) while E_safe_minus
-// comes in comfortably under it (the asymmetry is inherent to the geometry,
-// not a bug -- see the regression test below).
+// case -- see the E_SAFE_EPSILON comment in lib/engineering/gates.ts) while
+// E_safe_minus comes in comfortably under it (the asymmetry is inherent to the
+// geometry, not a bug -- see the regression test below).
 const basePassInputs: CalculatorInputs = {
   partLengthMm: 300,
   partWidthMm: 200,
@@ -74,6 +68,7 @@ describe("validateInputs", () => {
     partDepthMm: "100",
     accuracyPlusMm: "3.6",
     accuracyMinusMm: "3.6",
+    maxWorkingDistanceMm: "",
   };
 
   it("accepts valid numeric strings", () => {
@@ -86,6 +81,7 @@ describe("validateInputs", () => {
         partDepthMm: 100,
         accuracyPlus: 3.6,
         accuracyMinus: 3.6,
+        maxWorkingDistanceMm: undefined,
       });
     }
   });
@@ -170,10 +166,39 @@ describe("validateInputs", () => {
       partDepthMm: "-1",
       accuracyPlusMm: "0",
       accuracyMinusMm: "",
+      maxWorkingDistanceMm: "",
     });
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.fieldErrors.map((e) => e.code)).toEqual(["ERR-01", "ERR-02", "ERR-03", "ERR-04a", "ERR-04b"]);
+    }
+  });
+
+  it("leaves maxWorkingDistanceMm undefined when blank (it's optional)", () => {
+    const result = validateInputs({ ...validRaw, maxWorkingDistanceMm: "" });
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.inputs.maxWorkingDistanceMm).toBeUndefined();
+    }
+  });
+
+  it("parses a valid maxWorkingDistanceMm when provided", () => {
+    const result = validateInputs({ ...validRaw, maxWorkingDistanceMm: "500" });
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.inputs.maxWorkingDistanceMm).toBe(500);
+    }
+  });
+
+  it("rejects a negative maxWorkingDistanceMm with ERR-12", () => {
+    const result = validateInputs({ ...validRaw, maxWorkingDistanceMm: "-5" });
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.fieldErrors).toContainEqual({
+        field: "maxWorkingDistanceMm",
+        code: "ERR-12",
+        message: "Enter a valid positive maximum working distance, or leave it blank.",
+      });
     }
   });
 });
@@ -212,15 +237,32 @@ describe("evaluatePreset - sample scenarios (spec Section 5-6 formula chain)", (
     expect(evaluation.computation.N_x_req).toBe(1006);
   });
 
-  it("disparity-range failure (ERR-07): near disparity exceeds the configured limit", () => {
-    const tightDisparityPreset: PresetConfig = { ...basePreset, maxSupportedDisparityPx: 100 };
-    const evaluation = evaluatePreset(basePassInputs, tightDisparityPreset, baseResolutions);
+  it("disparity-range failure (ERR-07): the near-to-far disparity SPAN exceeds the configured limit", () => {
+    // d_near - d_far = 251.5 - 167.667 = 83.833 in the base scenario, so a
+    // 50px range cap (well under that span, but well above either d_near or
+    // d_far alone) forces the failure -- proving this is a span check, not an
+    // absolute-value check re-introduced by accident.
+    const tightRangePreset: PresetConfig = { ...basePreset, maxDisparityRangePx: 50 };
+    const evaluation = evaluatePreset(basePassInputs, tightRangePreset, baseResolutions);
 
     expect(evaluation.passed).toBe(false);
     expect(evaluation.errorCode).toBe("ERR-07");
     expect(evaluation.errorMessage).toBe("Near disparity exceeds the configured stereo processing range.");
-    // d_near (251.5) was computed and did exceed the 100px limit.
     expect(evaluation.computation.d_near).toBeCloseTo(251.5, 6);
+    expect(evaluation.computation.d_far).toBeCloseTo(167.667, 3);
+    expect(evaluation.computation.d_near! - evaluation.computation.d_far!).toBeCloseTo(83.833, 2);
+  });
+
+  it("disparity-range failure is a SPAN check: a high absolute d_near does not fail it alone", () => {
+    // Same d_near (251.5) as the scenario above, but with a shallow enough
+    // depth that d_near - d_far stays under a range cap that the old
+    // absolute-value check (d_near > 100) would have failed outright.
+    const shallowInputs: CalculatorInputs = { ...basePassInputs, partDepthMm: 1 };
+    const preset: PresetConfig = { ...basePreset, maxDisparityRangePx: 100 };
+    const evaluation = evaluatePreset(shallowInputs, preset, baseResolutions);
+
+    expect(evaluation.computation.d_near!).toBeGreaterThan(100);
+    expect(evaluation.errorCode).not.toBe("ERR-07");
   });
 
   it("working-distance failure (ERR-05): Z_near exceeds the machine's approved near limit", () => {
@@ -274,7 +316,7 @@ describe("evaluatePreset - symmetric case matches the original single-accuracy f
     // single E_safe corresponds to the new E_safe_plus: the original formula's
     // E_Z = max(|Z_low-Z_far|, |Z_high-Z_far|) always took the Z_low
     // (subtraction / "+") branch, since it's structurally always the larger of
-    // the two -- see the E_SAFE_EPSILON comment in calculator.ts.
+    // the two -- see the E_SAFE_EPSILON comment in lib/engineering/gates.ts.
     const evaluation = evaluatePreset(basePassInputs, basePreset, baseResolutions);
 
     expect(evaluation.passed).toBe(true);
@@ -307,8 +349,8 @@ describe("evaluatePreset - asymmetric accuracy: f_req = max(f_req_plus, f_req_mi
 });
 
 describe("checkDepthAccuracy - ERR-09a / ERR-09b branch logic", () => {
-  // The algebraic identity documented above E_SAFE_EPSILON in calculator.ts means
-  // a *natural* evaluatePreset scenario where E_safe genuinely exceeds its own
+  // The algebraic identity documented above E_SAFE_EPSILON in lib/engineering/gates.ts
+  // means a *natural* evaluatePreset scenario where E_safe genuinely exceeds its own
   // target (beyond floating-point noise) essentially cannot occur once the
   // earlier gates (ERR-05..08) have passed -- whichever side drives f_req lands
   // almost exactly on its own target, and the other side always comes in
@@ -432,6 +474,100 @@ describe("evaluatePreset - monotonicity invariants", () => {
   });
 });
 
+describe("evaluatePreset - optional maximum working distance (advanced input)", () => {
+  it("adds an additional ceiling on top of the preset's own maxNearDistanceMm", () => {
+    // Base scenario's Z_near = 200mm, well inside the preset's own 1000mm limit.
+    // A user-supplied 150mm ceiling should fail it even though the preset's own
+    // limit alone would have allowed it.
+    const constrained: CalculatorInputs = { ...basePassInputs, maxWorkingDistanceMm: 150 };
+    const evaluation = evaluatePreset(constrained, basePreset, baseResolutions);
+
+    expect(evaluation.passed).toBe(false);
+    expect(evaluation.errorCode).toBe("ERR-05");
+    expect(evaluation.computation.Z_near).toBeCloseTo(200, 6);
+  });
+
+  it("never loosens the preset's own maxNearDistanceMm (min, not replace)", () => {
+    // A generous 5000mm user ceiling should have zero effect versus the
+    // preset's own (tighter) 1000mm limit -- same PASS as the unconstrained case.
+    const loose: CalculatorInputs = { ...basePassInputs, maxWorkingDistanceMm: 5000 };
+    const unconstrained = evaluatePreset(basePassInputs, basePreset, baseResolutions);
+    const withLooseCeiling = evaluatePreset(loose, basePreset, baseResolutions);
+
+    expect(withLooseCeiling.passed).toBe(unconstrained.passed);
+    expect(withLooseCeiling.computation.Z_near).toBe(unconstrained.computation.Z_near);
+  });
+
+  it("leaving it undefined is identical to not having the feature at all", () => {
+    const withUndefined = evaluatePreset({ ...basePassInputs, maxWorkingDistanceMm: undefined }, basePreset, baseResolutions);
+    const withoutField = evaluatePreset(basePassInputs, basePreset, baseResolutions);
+    expect(JSON.stringify(withUndefined)).toBe(JSON.stringify(withoutField));
+  });
+});
+
+describe("runCalculation - optional maximum working distance surfaces a specific message", () => {
+  it("reports the next-shortest achievable distance when the ceiling is the sole blocker", () => {
+    // TestPresetA's Z_near for the base scenario is 200mm; a 150mm user ceiling
+    // blocks it even though everything else about the request is achievable.
+    const constrained: CalculatorInputs = { ...basePassInputs, maxWorkingDistanceMm: 150 };
+    const result = runCalculation(constrained, [basePreset], baseResolutions);
+
+    expect(result.status).toBe("NO VALID CONFIGURATION");
+    expect(result.errorMessage).toBe(
+      "No preset fits within the specified maximum working distance; the next-shortest achievable distance is 200 mm with the TestPresetA setup."
+    );
+  });
+
+  it("falls back to the generic ERR-11 message when the part wouldn't work even without the ceiling", () => {
+    // A resolution list too small for the request fails ERR-06 regardless of
+    // any working-distance ceiling -- the specific message would be misleading
+    // here ("more room" would not fix a resolution shortfall).
+    const tinyResolutions: ResolutionConfig[] = [
+      { name: "Tiny", horizontalPixels: 10, verticalPixels: 10, megapixels: 0.0001, priority: 1, active: true },
+    ];
+    const constrained: CalculatorInputs = { ...basePassInputs, maxWorkingDistanceMm: 150 };
+    const result = runCalculation(constrained, [basePreset], tinyResolutions);
+
+    expect(result.status).toBe("NO VALID CONFIGURATION");
+    expect(result.errorMessage).toBe("No approved internal preset passes this request.");
+  });
+
+  it("does not affect the generic message when no ceiling was requested", () => {
+    const tinyResolutions: ResolutionConfig[] = [
+      { name: "Tiny", horizontalPixels: 10, verticalPixels: 10, megapixels: 0.0001, priority: 1, active: true },
+    ];
+    const result = runCalculation(basePassInputs, [basePreset], tinyResolutions);
+
+    expect(result.errorMessage).toBe("No approved internal preset passes this request.");
+  });
+});
+
+describe("real placeholder config (lib/engineering/presets.ts + lib/cameraDatabase) - known reference case", () => {
+  it("250x150x200mm @ 1mm accuracy: Long Baseline passes on the disparity-range fix, Compact/Standard fail ERR-07", () => {
+    // Regression check for the real product config (not the basePreset test
+    // fixture): confirms the disparity-RANGE fix (d_near - d_far vs
+    // maxDisparityRangePx) behaves as verified by hand before the folder
+    // reorganization -- same numbers, moved code.
+    const raw: RawCalculatorInputs = {
+      partLengthMm: "250",
+      partWidthMm: "150",
+      partDepthMm: "200",
+      accuracyPlusMm: "1",
+      accuracyMinusMm: "1",
+      maxWorkingDistanceMm: "",
+    };
+    const result = calculate(raw, PRESETS, RESOLUTIONS);
+
+    expect(result.status).toBe("PASS");
+    expect(result.recommended?.presetName).toBe("Long Baseline");
+
+    const byName = Object.fromEntries(result.evaluations.map((e) => [e.presetName, e]));
+    expect(byName["Compact"]?.errorCode).toBe("ERR-07");
+    expect(byName["Standard"]?.errorCode).toBe("ERR-07");
+    expect(byName["Long Baseline"]?.passed).toBe(true);
+  });
+});
+
 describe("determinism", () => {
   it("produces identical output for identical inputs and config, every time", () => {
     const raw: RawCalculatorInputs = {
@@ -440,6 +576,7 @@ describe("determinism", () => {
       partDepthMm: "100",
       accuracyPlusMm: "3.6",
       accuracyMinusMm: "3.6",
+      maxWorkingDistanceMm: "",
     };
     const presets = [basePreset];
 
@@ -530,7 +667,14 @@ describe("runCalculation - overall status and tie-break", () => {
 
   it("top-level calculate() surfaces input validation failures as status FAIL", () => {
     const result = calculate(
-      { partLengthMm: "", partWidthMm: "200", partDepthMm: "100", accuracyPlusMm: "3.6", accuracyMinusMm: "3.6" },
+      {
+        partLengthMm: "",
+        partWidthMm: "200",
+        partDepthMm: "100",
+        accuracyPlusMm: "3.6",
+        accuracyMinusMm: "3.6",
+        maxWorkingDistanceMm: "",
+      },
       [basePreset],
       baseResolutions
     );

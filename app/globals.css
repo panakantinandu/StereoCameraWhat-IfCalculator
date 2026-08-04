@@ -187,6 +187,21 @@ body {
   text-align: center;
 }
 
+.advanced-section {
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 8px 0 18px;
+  background: #fafbfc;
+}
+
+.advanced-section summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
 .button-row {
   display: flex;
   gap: 10px;
@@ -274,6 +289,12 @@ button.secondary:hover {
 .empty-state {
   color: var(--color-text-muted);
   font-style: italic;
+}
+
+.plain-summary {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 14px;
 }
 
 .result-grid {
