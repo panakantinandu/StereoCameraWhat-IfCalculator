@@ -209,6 +209,7 @@ export default function Page() {
                 id="partLengthMm"
                 type="number"
                 min="0"
+                step="any"
                 className={fieldError(errors, "partLengthMm") ? "has-error" : ""}
                 value={rawInputs.partLengthMm}
                 onChange={(e) => updateField("partLengthMm", e.target.value)}
@@ -225,6 +226,7 @@ export default function Page() {
                 id="partWidthMm"
                 type="number"
                 min="0"
+                step="any"
                 className={fieldError(errors, "partWidthMm") ? "has-error" : ""}
                 value={rawInputs.partWidthMm}
                 onChange={(e) => updateField("partWidthMm", e.target.value)}
@@ -241,6 +243,7 @@ export default function Page() {
                 id="partDepthMm"
                 type="number"
                 min="0"
+                step="any"
                 className={fieldError(errors, "partDepthMm") ? "has-error" : ""}
                 value={rawInputs.partDepthMm}
                 onChange={(e) => updateField("partDepthMm", e.target.value)}
@@ -270,6 +273,7 @@ export default function Page() {
                   id="accuracySymmetricMm"
                   type="number"
                   min="0"
+                  step="any"
                   className={
                     fieldError(errors, "accuracyPlusMm") || fieldError(errors, "accuracyMinusMm") ? "has-error" : ""
                   }
@@ -293,6 +297,7 @@ export default function Page() {
                     id="accuracyPlusMm"
                     type="number"
                     min="0"
+                    step="any"
                     className={fieldError(errors, "accuracyPlusMm") ? "has-error" : ""}
                     value={rawInputs.accuracyPlusMm}
                     onChange={(e) => updateField("accuracyPlusMm", e.target.value)}
@@ -311,6 +316,7 @@ export default function Page() {
                     id="accuracyMinusMm"
                     type="number"
                     min="0"
+                    step="any"
                     className={fieldError(errors, "accuracyMinusMm") ? "has-error" : ""}
                     value={rawInputs.accuracyMinusMm}
                     onChange={(e) => updateField("accuracyMinusMm", e.target.value)}
@@ -342,6 +348,7 @@ export default function Page() {
                   id="maxWorkingDistanceMm"
                   type="number"
                   min="0"
+                  step="any"
                   className={fieldError(errors, "maxWorkingDistanceMm") ? "has-error" : ""}
                   value={rawInputs.maxWorkingDistanceMm}
                   onChange={(e) => updateField("maxWorkingDistanceMm", e.target.value)}

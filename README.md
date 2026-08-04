@@ -288,6 +288,23 @@ covers:
   message only appears when the ceiling is genuinely the sole blocker
 - A regression check against the real placeholder config (not just the test
   fixture preset) for a known 250×150×200mm @ 1mm reference case
+- Decimal input support (spec Section 2.3): each numeric input individually
+  confirmed to flow unrounded into an intermediate value (`W_req`, `H_req`,
+  `Z_far`, `E_design`), including a 0.05mm accuracy case
+
+### Decimal input bug (fixed)
+
+All four/five numeric `<input type="number">` elements in `app/page.tsx` were
+missing a `step` attribute, defaulting to the browser's `step="1"` — which
+marks any decimal entry as `validity.stepMismatch`. Depending on the browser,
+this can silently reject, clear, or snap-round decimal values (e.g. `1.2`,
+`0.05`), even though the parsing (`Number()`, never `parseInt`), validation
+(no integer-only regex), and calculation layers (no rounding of inputs
+anywhere in `lib/physics`/`lib/engineering`) were all already correct. Fixed
+by adding `step="any"` to every numeric input. If a future numeric input field
+is added to the form, give it `step="any"` too — this is an easy one to miss
+since Chromium happens to preserve typed decimal values regardless of
+`stepMismatch`, so the bug is invisible in Chrome-only testing.
 
 ## Errors
 

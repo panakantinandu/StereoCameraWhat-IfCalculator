@@ -307,6 +307,90 @@ describe("evaluatePreset - sample scenarios (spec Section 5-6 formula chain)", (
   });
 });
 
+describe("decimal input support (spec Section 2.3: 'Allow decimal values')", () => {
+  // Regression coverage for a bug where all four/five numeric inputs were
+  // being rejected/truncated. The root cause was the HTML <input type="number">
+  // elements having no `step` attribute, which defaults to step="1" and marks
+  // any decimal entry as validity.stepMismatch -- fixed by adding step="any"
+  // to every numeric input in app/page.tsx. The parsing layer (parseNumber in
+  // lib/recommendation/calculate.ts) already used Number(), never parseInt, and
+  // there was no integer-only regex in validateInputs, and no rounding of
+  // inputs anywhere in lib/physics or lib/engineering -- confirmed by direct
+  // source inspection, and by the assertions below on intermediate computed
+  // values (not just final PASS/FAIL, so a truncation bug would be caught even
+  // if it happened not to flip the result).
+
+  it("partLengthMm (300.75) flows unrounded into W_req", () => {
+    const inputs: CalculatorInputs = { ...basePassInputs, partLengthMm: 300.75 };
+    const evaluation = evaluatePreset(inputs, basePreset, baseResolutions);
+    expect(evaluation.computation.W_req).toBeCloseTo(300.75, 9);
+    expect(Number.isInteger(evaluation.computation.W_req)).toBe(false);
+  });
+
+  it("partWidthMm (200.25) flows unrounded into H_req", () => {
+    const inputs: CalculatorInputs = { ...basePassInputs, partWidthMm: 200.25 };
+    const evaluation = evaluatePreset(inputs, basePreset, baseResolutions);
+    expect(evaluation.computation.H_req).toBeCloseTo(200.25, 9);
+    expect(Number.isInteger(evaluation.computation.H_req)).toBe(false);
+  });
+
+  it("partDepthMm (1.2) flows unrounded into Z_far (via Z_near + depth)", () => {
+    const inputs: CalculatorInputs = { ...basePassInputs, partDepthMm: 1.2 };
+    const evaluation = evaluatePreset(inputs, basePreset, baseResolutions);
+    // Compare the gap rather than the absolute Z_far, so this doesn't depend
+    // on also hand-deriving Z_near for this scenario.
+    expect(evaluation.computation.Z_far! - evaluation.computation.Z_near!).toBeCloseTo(1.2, 9);
+  });
+
+  it("accuracyPlus/accuracyMinus (0.05mm, Gary's smallest transcript example) flow unrounded into E_design", () => {
+    const inputs: CalculatorInputs = { ...basePassInputs, accuracyPlus: 0.05, accuracyMinus: 0.05 };
+    const evaluation = evaluatePreset(inputs, basePreset, baseResolutions);
+    // basePreset.safetyFactor = 2, so E_design = 0.05 / 2 = 0.025 exactly.
+    expect(evaluation.computation.E_design_plus).toBeCloseTo(0.025, 9);
+    expect(evaluation.computation.E_design_minus).toBeCloseTo(0.025, 9);
+    expect(Number.isInteger(evaluation.computation.E_design_plus)).toBe(false);
+    // N_x_req/N_y_req must still come out as proper (if large) integers --
+    // decimal input support must not disturb the spec-mandated ceil() on
+    // resolution/pixel fields (cause #5, explicitly out of scope to change).
+    expect(Number.isInteger(evaluation.computation.N_x_req)).toBe(true);
+    expect(Number.isInteger(evaluation.computation.N_y_req)).toBe(true);
+  });
+
+  it("maxWorkingDistanceMm (850.5) parses to the exact decimal, not a truncated integer", () => {
+    const raw: RawCalculatorInputs = {
+      partLengthMm: "300",
+      partWidthMm: "200",
+      partDepthMm: "100",
+      accuracyPlusMm: "3.6",
+      accuracyMinusMm: "3.6",
+      maxWorkingDistanceMm: "850.5",
+    };
+    const result = validateInputs(raw);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.inputs.maxWorkingDistanceMm).toBe(850.5);
+    }
+  });
+
+  it("all four required inputs together as decimals, plus a 0.05mm accuracy, retain full precision end to end", () => {
+    const raw: RawCalculatorInputs = {
+      partLengthMm: "300.75",
+      partWidthMm: "200.25",
+      partDepthMm: "1.2",
+      accuracyPlusMm: "0.05",
+      accuracyMinusMm: "0.05",
+      maxWorkingDistanceMm: "",
+    };
+    const result = calculate(raw, [basePreset], baseResolutions);
+    const evaluation = result.evaluations[0]!;
+
+    expect(evaluation.computation.W_req).toBeCloseTo(300.75, 9);
+    expect(evaluation.computation.H_req).toBeCloseTo(200.25, 9);
+    expect(evaluation.computation.Z_far! - evaluation.computation.Z_near!).toBeCloseTo(1.2, 9);
+    expect(evaluation.computation.E_design_plus).toBeCloseTo(0.025, 9);
+  });
+});
+
 describe("evaluatePreset - symmetric case matches the original single-accuracy formula", () => {
   it("is the regression check: accuracyPlus == accuracyMinus reproduces the old numbers exactly", () => {
     // These are the exact same numbers the PASS scenario above used back when
