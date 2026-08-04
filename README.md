@@ -25,6 +25,12 @@ been reviewed and the placeholder values replaced with approved numbers. The
 UI itself does not warn per-result which config values are placeholders — that
 review has to happen at the code level, by someone reading these two files.
 
+`maxSupportedDisparityPx` on all three presets was raised (400/500/600 →
+900/1100/1500) after initial testing showed tight accuracy asks (e.g. 1mm)
+failed `ERR-07` across the board at the original values. These are still
+unverified placeholders, not a measured stereo-matching search-range limit —
+flag this specifically during the Section 11.1 review.
+
 ## How it works
 
 1. The user enters four numbers: part length, part width, part depth, and the

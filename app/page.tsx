@@ -364,18 +364,6 @@ export default function Page() {
           )}
         </section>
       </div>
-
-      <section className="method-note" aria-label="Method note">
-        <h2>What this tool does and does not prove</h2>
-        <p>
-          This calculator runs the approved internal formula chain against a chosen part size and accuracy target to
-          estimate the working distance, resolution, and focal length a stereo pair would theoretically need, and
-          checks that against a handful of pre-approved engineering presets. It does not account for lens
-          distortion, motion blur, occlusion, ambient lighting, calibration error, or robot/positioning
-          uncertainty — those all still have to be verified through calibration and a physical prototype before any
-          camera or lens choice is finalized.
-        </p>
-      </section>
     </div>
   );
 }

@@ -25,7 +25,7 @@ export const PRESETS: PresetConfig[] = [
     maxNearDistanceMm: 600, // TBD — pending Gary/engineering approval, see spec Section 11.1
     disparityUncertaintyPx: 0.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
     safetyFactor: 1.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
-    maxSupportedDisparityPx: 400, // TBD — pending Gary/engineering approval, see spec Section 11.1
+    maxSupportedDisparityPx: 900, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableHorizontalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableVerticalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     pixelPitchUm: 3.45, // TBD — pending Gary/engineering approval, see spec Section 11.1
@@ -43,7 +43,7 @@ export const PRESETS: PresetConfig[] = [
     maxNearDistanceMm: 1500, // TBD — pending Gary/engineering approval, see spec Section 11.1
     disparityUncertaintyPx: 0.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
     safetyFactor: 2, // TBD — pending Gary/engineering approval, see spec Section 11.1
-    maxSupportedDisparityPx: 500, // TBD — pending Gary/engineering approval, see spec Section 11.1
+    maxSupportedDisparityPx: 1100, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableHorizontalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableVerticalFraction: 0.9, // TBD — pending Gary/engineering approval, see spec Section 11.1
     pixelPitchUm: 3.45, // TBD — pending Gary/engineering approval, see spec Section 11.1
@@ -61,7 +61,7 @@ export const PRESETS: PresetConfig[] = [
     maxNearDistanceMm: 4000, // TBD — pending Gary/engineering approval, see spec Section 11.1
     disparityUncertaintyPx: 0.5, // TBD — pending Gary/engineering approval, see spec Section 11.1
     safetyFactor: 2, // TBD — pending Gary/engineering approval, see spec Section 11.1
-    maxSupportedDisparityPx: 600, // TBD — pending Gary/engineering approval, see spec Section 11.1
+    maxSupportedDisparityPx: 1500, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableHorizontalFraction: 0.85, // TBD — pending Gary/engineering approval, see spec Section 11.1
     usableVerticalFraction: 0.85, // TBD — pending Gary/engineering approval, see spec Section 11.1
     pixelPitchUm: 3.45, // TBD — pending Gary/engineering approval, see spec Section 11.1
