@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculate,
+  checkDepthAccuracy,
   evaluatePreset,
   isPresetConfigValid,
   pickRecommended,
@@ -50,15 +51,20 @@ const baseResolutions: ResolutionConfig[] = [
   { name: "Res-Large", horizontalPixels: 2000, verticalPixels: 1500, megapixels: 3.0, priority: 3, active: true },
 ];
 
-// Hand-verified: W_req=300, H_req=200, Z_h=200, Z_v=100, Z_near=200,
-// Z_far=300, E_design=1.8, f_req=503, N_x_req=1006, N_y_req=503,
-// d_near=251.5, d_far=167.667, E_safe=3.6 (== requiredAccuracyMm, the
-// boundary case -- see E_SAFE_EPSILON comment in calculator.ts).
+// Hand-verified against the original single-accuracy spec: W_req=300, H_req=200,
+// Z_h=200, Z_v=100, Z_near=200, Z_far=300, E_design=1.8, f_req=503,
+// N_x_req=1006, N_y_req=503, d_near=251.5, d_far=167.667. Symmetric
+// (accuracyPlus == accuracyMinus == 3.6) so f_req_plus == f_req_minus == 503,
+// and E_safe_plus lands exactly on 3.6 (the old formula's E_safe, boundary
+// case -- see E_SAFE_EPSILON comment in calculator.ts) while E_safe_minus
+// comes in comfortably under it (the asymmetry is inherent to the geometry,
+// not a bug -- see the regression test below).
 const basePassInputs: CalculatorInputs = {
   partLengthMm: 300,
   partWidthMm: 200,
   partDepthMm: 100,
-  requiredAccuracyMm: 3.6,
+  accuracyPlus: 3.6,
+  accuracyMinus: 3.6,
 };
 
 describe("validateInputs", () => {
@@ -66,7 +72,8 @@ describe("validateInputs", () => {
     partLengthMm: "300",
     partWidthMm: "200",
     partDepthMm: "100",
-    requiredAccuracyMm: "3.6",
+    accuracyPlusMm: "3.6",
+    accuracyMinusMm: "3.6",
   };
 
   it("accepts valid numeric strings", () => {
@@ -77,7 +84,8 @@ describe("validateInputs", () => {
         partLengthMm: 300,
         partWidthMm: 200,
         partDepthMm: 100,
-        requiredAccuracyMm: 3.6,
+        accuracyPlus: 3.6,
+        accuracyMinus: 3.6,
       });
     }
   });
@@ -106,14 +114,26 @@ describe("validateInputs", () => {
     }
   });
 
-  it("rejects an infinite required accuracy with ERR-04", () => {
-    const result = validateInputs({ ...validRaw, requiredAccuracyMm: "Infinity" });
+  it("rejects an infinite accuracy (+) with ERR-04a", () => {
+    const result = validateInputs({ ...validRaw, accuracyPlusMm: "Infinity" });
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(result.fieldErrors).toContainEqual({
-        field: "requiredAccuracyMm",
-        code: "ERR-04",
-        message: "Enter a valid positive required stereo depth accuracy.",
+        field: "accuracyPlusMm",
+        code: "ERR-04a",
+        message: "Enter a valid positive required stereo depth accuracy (+).",
+      });
+    }
+  });
+
+  it("rejects a blank accuracy (-) with ERR-04b", () => {
+    const result = validateInputs({ ...validRaw, accuracyMinusMm: "" });
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.fieldErrors).toContainEqual({
+        field: "accuracyMinusMm",
+        code: "ERR-04b",
+        message: "Enter a valid positive required stereo depth accuracy (-).",
       });
     }
   });
@@ -148,11 +168,12 @@ describe("validateInputs", () => {
       partLengthMm: "",
       partWidthMm: "-5",
       partDepthMm: "-1",
-      requiredAccuracyMm: "0",
+      accuracyPlusMm: "0",
+      accuracyMinusMm: "",
     });
     expect(result.valid).toBe(false);
     if (!result.valid) {
-      expect(result.fieldErrors.map((e) => e.code)).toEqual(["ERR-01", "ERR-02", "ERR-03", "ERR-04"]);
+      expect(result.fieldErrors.map((e) => e.code)).toEqual(["ERR-01", "ERR-02", "ERR-03", "ERR-04a", "ERR-04b"]);
     }
   });
 });
@@ -170,7 +191,8 @@ describe("evaluatePreset - sample scenarios (spec Section 5-6 formula chain)", (
     expect(evaluation.computation.N_x_req).toBe(1006);
     expect(evaluation.computation.N_y_req).toBe(503);
     expect(evaluation.computation.d_near).toBeCloseTo(251.5, 6);
-    expect(evaluation.computation.E_safe).toBeCloseTo(3.6, 6);
+    expect(evaluation.computation.E_safe_plus).toBeCloseTo(3.6, 6);
+    expect(evaluation.computation.E_safe_minus).toBeLessThanOrEqual(3.6);
     // 1100x700 is the first listed resolution that meets 1006x503.
     expect(evaluation.selectedResolution?.name).toBe("Res-Mid");
   });
@@ -214,12 +236,12 @@ describe("evaluatePreset - sample scenarios (spec Section 5-6 formula chain)", (
   });
 
   it("far-disparity guard (ERR-08) fails gracefully instead of dividing by zero", () => {
-    // An astronomically loose accuracy (1e20mm) drives E_design so large that
-    // Z_far + E_design underflows to exactly E_design at double-precision,
-    // which in turn makes d_far round down to exactly delta_d (1px). This is
-    // the floating-point edge the "guard before dividing" instruction exists
-    // for: d_far - delta_d would otherwise be 0.
-    const extremeInputs: CalculatorInputs = { ...basePassInputs, requiredAccuracyMm: 1e20 };
+    // Astronomically loose accuracy on both sides (1e20mm) drives E_design so
+    // large that Z_far + E_design underflows to exactly E_design at
+    // double-precision, which in turn makes d_far round down to exactly
+    // delta_d (1px). This is the floating-point edge the "guard before
+    // dividing" instruction exists for: d_far - delta_d would otherwise be 0.
+    const extremeInputs: CalculatorInputs = { ...basePassInputs, accuracyPlus: 1e20, accuracyMinus: 1e20 };
     const preset: PresetConfig = { ...basePreset, safetyFactor: 1 };
 
     const evaluation = evaluatePreset(extremeInputs, preset, baseResolutions);
@@ -229,7 +251,7 @@ describe("evaluatePreset - sample scenarios (spec Section 5-6 formula chain)", (
     expect(evaluation.errorMessage).toBe("Far disparity is too small for the configured disparity uncertainty.");
     expect(Number.isFinite(evaluation.computation.d_far)).toBe(true);
     expect(evaluation.computation.Z_low).toBeUndefined();
-    expect(evaluation.computation.E_safe).toBeUndefined();
+    expect(evaluation.computation.E_safe_plus).toBeUndefined();
   });
 
   it("invalid preset config (ERR-10) fails gracefully instead of crashing on baseline = 0", () => {
@@ -243,10 +265,93 @@ describe("evaluatePreset - sample scenarios (spec Section 5-6 formula chain)", (
   });
 });
 
+describe("evaluatePreset - symmetric case matches the original single-accuracy formula", () => {
+  it("is the regression check: accuracyPlus == accuracyMinus reproduces the old numbers exactly", () => {
+    // These are the exact same numbers the PASS scenario above used back when
+    // there was a single `requiredAccuracyMm` field, before the asymmetric
+    // generalization. f_req/N_x_req/N_y_req/d_near/d_far are untouched by the
+    // formula split (only the accuracy stage became two-sided), and the old
+    // single E_safe corresponds to the new E_safe_plus: the original formula's
+    // E_Z = max(|Z_low-Z_far|, |Z_high-Z_far|) always took the Z_low
+    // (subtraction / "+") branch, since it's structurally always the larger of
+    // the two -- see the E_SAFE_EPSILON comment in calculator.ts.
+    const evaluation = evaluatePreset(basePassInputs, basePreset, baseResolutions);
+
+    expect(evaluation.passed).toBe(true);
+    expect(evaluation.computation.f_req_plus).toBe(evaluation.computation.f_req_minus);
+    expect(evaluation.computation.f_req).toBeCloseTo(503, 6);
+    expect(evaluation.computation.N_x_req).toBe(1006);
+    expect(evaluation.computation.N_y_req).toBe(503);
+    expect(evaluation.computation.d_near).toBeCloseTo(251.5, 6);
+    expect(evaluation.computation.d_far).toBeCloseTo(167.667, 3);
+    expect(evaluation.computation.E_safe_plus).toBeCloseTo(3.6, 6);
+  });
+});
+
+describe("evaluatePreset - asymmetric accuracy: f_req = max(f_req_plus, f_req_minus)", () => {
+  it("the (+) bound dominates when it is the stricter (smaller) target", () => {
+    const inputs: CalculatorInputs = { ...basePassInputs, accuracyPlus: 1, accuracyMinus: 10 };
+    const evaluation = evaluatePreset(inputs, basePreset, baseResolutions);
+
+    expect(evaluation.computation.f_req_plus!).toBeGreaterThan(evaluation.computation.f_req_minus!);
+    expect(evaluation.computation.f_req).toBe(evaluation.computation.f_req_plus);
+  });
+
+  it("the (-) bound dominates when it is the stricter (smaller) target", () => {
+    const inputs: CalculatorInputs = { ...basePassInputs, accuracyPlus: 10, accuracyMinus: 1 };
+    const evaluation = evaluatePreset(inputs, basePreset, baseResolutions);
+
+    expect(evaluation.computation.f_req_minus!).toBeGreaterThan(evaluation.computation.f_req_plus!);
+    expect(evaluation.computation.f_req).toBe(evaluation.computation.f_req_minus);
+  });
+});
+
+describe("checkDepthAccuracy - ERR-09a / ERR-09b branch logic", () => {
+  // The algebraic identity documented above E_SAFE_EPSILON in calculator.ts means
+  // a *natural* evaluatePreset scenario where E_safe genuinely exceeds its own
+  // target (beyond floating-point noise) essentially cannot occur once the
+  // earlier gates (ERR-05..08) have passed -- whichever side drives f_req lands
+  // almost exactly on its own target, and the other side always comes in
+  // strictly under. So the ERR-09a/ERR-09b branches themselves are tested
+  // directly against the extracted, exported checkDepthAccuracy helper (the same
+  // function evaluatePreset calls internally) with synthetic values, the same
+  // way the pickRecommended tie-break tiers are tested directly below.
+
+  it("fails ERR-09a only when the (+) side exceeds its target but (-) does not", () => {
+    const violations = checkDepthAccuracy(5, 1, 3, 3);
+    expect(violations).toEqual([{ code: "ERR-09a", message: "The safety-adjusted theoretical depth error exceeds the requested accuracy (+)." }]);
+  });
+
+  it("fails ERR-09b only when the (-) side exceeds its target but (+) does not", () => {
+    const violations = checkDepthAccuracy(1, 5, 3, 3);
+    expect(violations).toEqual([{ code: "ERR-09b", message: "The safety-adjusted theoretical depth error exceeds the requested accuracy (-)." }]);
+  });
+
+  it("reports both codes, in order, when both sides fail at once", () => {
+    const violations = checkDepthAccuracy(5, 5, 3, 3);
+    expect(violations.map((v) => v.code)).toEqual(["ERR-09a", "ERR-09b"]);
+  });
+
+  it("passes (empty array) when both sides are within their own target", () => {
+    expect(checkDepthAccuracy(2, 2, 3, 3)).toEqual([]);
+  });
+});
+
 describe("evaluatePreset - monotonicity invariants", () => {
-  it("tighter (smaller) required accuracy never reduces required focal length or pixels", () => {
-    const looser = evaluatePreset({ ...basePassInputs, requiredAccuracyMm: 3.6 }, basePreset, baseResolutions);
-    const tighter = evaluatePreset({ ...basePassInputs, requiredAccuracyMm: 1.8 }, basePreset, baseResolutions);
+  it("tightening AccuracyPlus alone never reduces f_req", () => {
+    // AccuracyMinus held loose (10mm) so it never becomes the driving side.
+    const looser = evaluatePreset({ ...basePassInputs, accuracyPlus: 3.6, accuracyMinus: 10 }, basePreset, baseResolutions);
+    const tighter = evaluatePreset({ ...basePassInputs, accuracyPlus: 1.8, accuracyMinus: 10 }, basePreset, baseResolutions);
+
+    expect(tighter.computation.f_req!).toBeGreaterThanOrEqual(looser.computation.f_req!);
+    expect(tighter.computation.N_x_req!).toBeGreaterThanOrEqual(looser.computation.N_x_req!);
+    expect(tighter.computation.N_y_req!).toBeGreaterThanOrEqual(looser.computation.N_y_req!);
+  });
+
+  it("tightening AccuracyMinus alone never reduces f_req", () => {
+    // AccuracyPlus held loose (10mm) so it never becomes the driving side.
+    const looser = evaluatePreset({ ...basePassInputs, accuracyPlus: 10, accuracyMinus: 3.6 }, basePreset, baseResolutions);
+    const tighter = evaluatePreset({ ...basePassInputs, accuracyPlus: 10, accuracyMinus: 1.8 }, basePreset, baseResolutions);
 
     expect(tighter.computation.f_req!).toBeGreaterThanOrEqual(looser.computation.f_req!);
     expect(tighter.computation.N_x_req!).toBeGreaterThanOrEqual(looser.computation.N_x_req!);
@@ -289,7 +394,7 @@ describe("evaluatePreset - monotonicity invariants", () => {
   it("selected resolution is never smaller than the computed N_x_req/N_y_req", () => {
     const scenarios = [
       evaluatePreset(basePassInputs, basePreset, baseResolutions),
-      evaluatePreset({ ...basePassInputs, requiredAccuracyMm: 1.8 }, basePreset, baseResolutions),
+      evaluatePreset({ ...basePassInputs, accuracyPlus: 1.8, accuracyMinus: 1.8 }, basePreset, baseResolutions),
       evaluatePreset({ ...basePassInputs, partDepthMm: 40 }, basePreset, baseResolutions),
     ];
 
@@ -303,19 +408,25 @@ describe("evaluatePreset - monotonicity invariants", () => {
     }
   });
 
-  it("PASS is impossible when the safety-adjusted error exceeds the requested accuracy", () => {
+  it("PASS is impossible when either safety-adjusted error exceeds its own requested accuracy", () => {
     const scenarios = [
-      evaluatePreset(basePassInputs, basePreset, baseResolutions),
-      evaluatePreset({ ...basePassInputs, requiredAccuracyMm: 1.8 }, basePreset, baseResolutions),
-      evaluatePreset(basePassInputs, { ...basePreset, disparityUncertaintyPx: 2 }, baseResolutions),
-      evaluatePreset(basePassInputs, { ...basePreset, safetyFactor: 3 }, baseResolutions),
+      { inputs: basePassInputs, preset: basePreset },
+      { inputs: { ...basePassInputs, accuracyPlus: 1.8, accuracyMinus: 1.8 }, preset: basePreset },
+      { inputs: basePassInputs, preset: { ...basePreset, disparityUncertaintyPx: 2 } },
+      { inputs: basePassInputs, preset: { ...basePreset, safetyFactor: 3 } },
+      { inputs: { ...basePassInputs, accuracyPlus: 1, accuracyMinus: 10 }, preset: basePreset },
+      { inputs: { ...basePassInputs, accuracyPlus: 10, accuracyMinus: 1 }, preset: basePreset },
     ];
 
-    for (const evaluation of scenarios) {
+    for (const { inputs, preset } of scenarios) {
+      const evaluation = evaluatePreset(inputs, preset, baseResolutions);
       if (evaluation.passed) {
-        expect(evaluation.computation.E_safe!).toBeLessThanOrEqual(basePassInputs.requiredAccuracyMm + 1e-6);
-      } else if (evaluation.errorCode === "ERR-09") {
-        expect(evaluation.computation.E_safe!).toBeGreaterThan(basePassInputs.requiredAccuracyMm);
+        expect(evaluation.computation.E_safe_plus!).toBeLessThanOrEqual(inputs.accuracyPlus + 1e-6);
+        expect(evaluation.computation.E_safe_minus!).toBeLessThanOrEqual(inputs.accuracyMinus + 1e-6);
+      } else if (evaluation.errorCode === "ERR-09a" || evaluation.errorCode === "ERR-09b") {
+        const violatesPlus = evaluation.computation.E_safe_plus! > inputs.accuracyPlus;
+        const violatesMinus = evaluation.computation.E_safe_minus! > inputs.accuracyMinus;
+        expect(violatesPlus || violatesMinus).toBe(true);
       }
     }
   });
@@ -327,7 +438,8 @@ describe("determinism", () => {
       partLengthMm: "300",
       partWidthMm: "200",
       partDepthMm: "100",
-      requiredAccuracyMm: "3.6",
+      accuracyPlusMm: "3.6",
+      accuracyMinusMm: "3.6",
     };
     const presets = [basePreset];
 
@@ -418,7 +530,7 @@ describe("runCalculation - overall status and tie-break", () => {
 
   it("top-level calculate() surfaces input validation failures as status FAIL", () => {
     const result = calculate(
-      { partLengthMm: "", partWidthMm: "200", partDepthMm: "100", requiredAccuracyMm: "3.6" },
+      { partLengthMm: "", partWidthMm: "200", partDepthMm: "100", accuracyPlusMm: "3.6", accuracyMinusMm: "3.6" },
       [basePreset],
       baseResolutions
     );

@@ -21,12 +21,14 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   "ERR-01": "Enter a valid positive part length.",
   "ERR-02": "Enter a valid positive part width.",
   "ERR-03": "Part depth cannot be negative.",
-  "ERR-04": "Enter a valid positive required stereo depth accuracy.",
+  "ERR-04a": "Enter a valid positive required stereo depth accuracy (+).",
+  "ERR-04b": "Enter a valid positive required stereo depth accuracy (-).",
   "ERR-05": "The required working distance exceeds the approved machine limit.",
   "ERR-06": "No listed resolution meets the calculated horizontal and vertical pixel requirement.",
   "ERR-07": "Near disparity exceeds the configured stereo processing range.",
   "ERR-08": "Far disparity is too small for the configured disparity uncertainty.",
-  "ERR-09": "The safety-adjusted theoretical depth error exceeds the requested accuracy.",
+  "ERR-09a": "The safety-adjusted theoretical depth error exceeds the requested accuracy (+).",
+  "ERR-09b": "The safety-adjusted theoretical depth error exceeds the requested accuracy (-).",
   "ERR-10": "The selected engineering preset is incomplete or invalid.",
   "ERR-11": "No approved internal preset passes this request.",
 };
@@ -51,9 +53,11 @@ function isValidNonNegative(n: number): boolean {
   return isFiniteNumber(n) && n >= 0;
 }
 
-/** Validates the four user-editable inputs. Blank, NaN, and infinite values are all
- * rejected with the same field message per the ERR table (the spec does not define
- * distinct wording per failure mode). */
+/** Validates the five user-editable inputs (part length/width/depth, plus the two
+ * accuracy magnitudes). Blank, NaN, and infinite values are all rejected with the
+ * same field message per the ERR table (the spec does not define distinct wording
+ * per failure mode). accuracyPlus/accuracyMinus are always positive magnitudes --
+ * the UI is responsible for mirroring one value into both when "symmetric" is on. */
 export function validateInputs(
   raw: RawCalculatorInputs
 ): { valid: true; inputs: CalculatorInputs } | { valid: false; fieldErrors: FieldError[] } {
@@ -74,16 +78,21 @@ export function validateInputs(
     fieldErrors.push({ field: "partDepthMm", code: "ERR-03", message: ERROR_MESSAGES["ERR-03"] });
   }
 
-  const requiredAccuracyMm = parseNumber(raw.requiredAccuracyMm);
-  if (!isValidPositive(requiredAccuracyMm)) {
-    fieldErrors.push({ field: "requiredAccuracyMm", code: "ERR-04", message: ERROR_MESSAGES["ERR-04"] });
+  const accuracyPlus = parseNumber(raw.accuracyPlusMm);
+  if (!isValidPositive(accuracyPlus)) {
+    fieldErrors.push({ field: "accuracyPlusMm", code: "ERR-04a", message: ERROR_MESSAGES["ERR-04a"] });
+  }
+
+  const accuracyMinus = parseNumber(raw.accuracyMinusMm);
+  if (!isValidPositive(accuracyMinus)) {
+    fieldErrors.push({ field: "accuracyMinusMm", code: "ERR-04b", message: ERROR_MESSAGES["ERR-04b"] });
   }
 
   if (fieldErrors.length > 0) {
     return { valid: false, fieldErrors };
   }
 
-  return { valid: true, inputs: { partLengthMm, partWidthMm, partDepthMm, requiredAccuracyMm } };
+  return { valid: true, inputs: { partLengthMm, partWidthMm, partDepthMm, accuracyPlus, accuracyMinus } };
 }
 
 /** Config-validity gate (ERR-10): every required preset field must be present and
@@ -131,17 +140,41 @@ export function selectResolution(
     .find((r) => r.horizontalPixels >= nxReq && r.verticalPixels >= nyReq);
 }
 
-// The formula chain is constructed so that, by algebraic identity, |Z_low - Z_far|
-// always equals E_design exactly once f_req is computed from it. That makes
-// E_safe (= S * E_Z) equal RequiredAccuracy almost exactly whenever the earlier
-// guards (ERR-05..08) pass, up to floating-point representation error alone
-// (repeating decimals from the tan()/division chain, not a modeling error). This
-// epsilon absorbs that representation error without weakening the ERR-09 check
-// the spec calls for.
+// f_req is derived from whichever accuracy bound is stricter (f_req = max(f_req_plus,
+// f_req_minus)), and Z_low/Z_high are then computed once from that shared f_req. By
+// algebraic identity this means the side that drove f_req always lands its E_safe
+// almost exactly on its own accuracy target (up to floating-point representation
+// error), while the other side comes in strictly under its target with real margin.
+// So in practice ERR-09a/ERR-09b are unreachable except at that one boundary, for
+// whichever side is driving -- this epsilon absorbs that representation error
+// without weakening the checks the spec calls for.
 const E_SAFE_EPSILON = 1e-9;
 
 function fails(a: number, b: number): boolean {
   return a - b > E_SAFE_EPSILON * Math.max(1, Math.abs(b));
+}
+
+/** The two-sided depth-accuracy pass check (ERR-09a / ERR-09b), extracted as a small
+ * pure function so it can be exercised directly with synthetic values in tests --
+ * the algebraic identity above means a *natural* end-to-end scenario where either
+ * side genuinely exceeds its own target essentially cannot occur once the earlier
+ * gates (ERR-05..08) have passed, so this is the only reliable seam for testing the
+ * failure branches themselves. Returns one entry per violated side, in ERR-09a,
+ * ERR-09b order; empty when both sides pass. */
+export function checkDepthAccuracy(
+  E_safe_plus: number,
+  E_safe_minus: number,
+  accuracyPlus: number,
+  accuracyMinus: number
+): { code: ErrorCode; message: string }[] {
+  const violations: { code: ErrorCode; message: string }[] = [];
+  if (fails(E_safe_plus, accuracyPlus)) {
+    violations.push({ code: "ERR-09a", message: ERROR_MESSAGES["ERR-09a"] });
+  }
+  if (fails(E_safe_minus, accuracyMinus)) {
+    violations.push({ code: "ERR-09b", message: ERROR_MESSAGES["ERR-09b"] });
+  }
+  return violations;
 }
 
 /** Evaluates one preset against the given inputs, following spec Sections 5-6
@@ -165,6 +198,20 @@ export function evaluatePreset(
     passed: false,
     errorCode,
     errorMessage: ERROR_MESSAGES[errorCode],
+    errorCodes: [errorCode],
+    computation,
+    selectedResolution,
+  });
+
+  const failMulti = (
+    violations: { code: ErrorCode; message: string }[],
+    selectedResolution?: ResolutionConfig
+  ): PresetEvaluation => ({
+    ...base,
+    passed: false,
+    errorCode: violations[0]?.code,
+    errorMessage: violations.map((v) => v.message).join(" "),
+    errorCodes: violations.map((v) => v.code),
     computation,
     selectedResolution,
   });
@@ -197,12 +244,18 @@ export function evaluatePreset(
 
   const Z_center = Z_near + inputs.partDepthMm / 2;
   const Z_far = Z_near + inputs.partDepthMm;
-  const E_design = inputs.requiredAccuracyMm / preset.safetyFactor;
+  const E_design_plus = inputs.accuracyPlus / preset.safetyFactor;
+  const E_design_minus = inputs.accuracyMinus / preset.safetyFactor;
   computation.Z_center = Z_center;
   computation.Z_far = Z_far;
-  computation.E_design = E_design;
+  computation.E_design_plus = E_design_plus;
+  computation.E_design_minus = E_design_minus;
 
-  const f_req = (preset.disparityUncertaintyPx * Z_far * (Z_far + E_design)) / (B * E_design);
+  const f_req_plus = (preset.disparityUncertaintyPx * Z_far * (Z_far + E_design_plus)) / (B * E_design_plus);
+  const f_req_minus = (preset.disparityUncertaintyPx * Z_far * (Z_far + E_design_minus)) / (B * E_design_minus);
+  const f_req = Math.max(f_req_plus, f_req_minus);
+  computation.f_req_plus = f_req_plus;
+  computation.f_req_minus = f_req_minus;
   computation.f_req = f_req;
 
   if (!isFiniteNumber(f_req) || f_req <= 0) {
@@ -238,23 +291,28 @@ export function evaluatePreset(
 
   const Z_low = (f_req * B) / (d_far - preset.disparityUncertaintyPx);
   const Z_high = (f_req * B) / (d_far + preset.disparityUncertaintyPx);
-  const E_Z = Math.max(Math.abs(Z_low - Z_far), Math.abs(Z_high - Z_far));
-  const E_safe = preset.safetyFactor * E_Z;
+  const E_Z_plus = Z_low - Z_far;
+  const E_Z_minus = Z_far - Z_high;
+  const E_safe_plus = preset.safetyFactor * E_Z_plus;
+  const E_safe_minus = preset.safetyFactor * E_Z_minus;
   computation.Z_low = Z_low;
   computation.Z_high = Z_high;
-  computation.E_Z = E_Z;
-  computation.E_safe = E_safe;
+  computation.E_Z_plus = E_Z_plus;
+  computation.E_Z_minus = E_Z_minus;
+  computation.E_safe_plus = E_safe_plus;
+  computation.E_safe_minus = E_safe_minus;
 
   if (preset.pixelPitchUm !== undefined) {
     computation.f_mm = (f_req * preset.pixelPitchUm) / 1000;
   }
 
-  if (!isFiniteNumber(E_safe)) {
+  if (!isFiniteNumber(E_safe_plus) || !isFiniteNumber(E_safe_minus)) {
     return fail("ERR-10", selectedResolution);
   }
 
-  if (fails(E_safe, inputs.requiredAccuracyMm)) {
-    return fail("ERR-09", selectedResolution);
+  const violations = checkDepthAccuracy(E_safe_plus, E_safe_minus, inputs.accuracyPlus, inputs.accuracyMinus);
+  if (violations.length > 0) {
+    return failMulti(violations, selectedResolution);
   }
 
   return { ...base, passed: true, computation, selectedResolution };

@@ -40,12 +40,16 @@ export interface ResolutionConfig {
   active: boolean;
 }
 
-/** Raw, possibly-invalid user input straight from the form (strings, so blanks are representable). */
+/** Raw, possibly-invalid user input straight from the form (strings, so blanks are representable).
+ * accuracyPlusMm / accuracyMinusMm are always entered as positive magnitudes -- the sign is implied
+ * by which bound the field represents, not typed by the user. When the "symmetric tolerance" toggle
+ * is on, the UI mirrors one typed value into both fields before calling validateInputs/calculate. */
 export interface RawCalculatorInputs {
   partLengthMm: string;
   partWidthMm: string;
   partDepthMm: string;
-  requiredAccuracyMm: string;
+  accuracyPlusMm: string;
+  accuracyMinusMm: string;
 }
 
 /** Parsed, validated numeric inputs. */
@@ -53,30 +57,38 @@ export interface CalculatorInputs {
   partLengthMm: number;
   partWidthMm: number;
   partDepthMm: number;
-  requiredAccuracyMm: number;
+  /** How far the measured depth is allowed to read FARTHER than actual, mm. Always a positive magnitude. */
+  accuracyPlus: number;
+  /** How far the measured depth is allowed to read CLOSER than actual, mm. Always a positive magnitude. */
+  accuracyMinus: number;
 }
 
 export type ErrorCode =
   | "ERR-01"
   | "ERR-02"
   | "ERR-03"
-  | "ERR-04"
+  | "ERR-04a"
+  | "ERR-04b"
   | "ERR-05"
   | "ERR-06"
   | "ERR-07"
   | "ERR-08"
-  | "ERR-09"
+  | "ERR-09a"
+  | "ERR-09b"
   | "ERR-10"
   | "ERR-11";
 
 export interface FieldError {
-  field: "partLengthMm" | "partWidthMm" | "partDepthMm" | "requiredAccuracyMm";
+  field: "partLengthMm" | "partWidthMm" | "partDepthMm" | "accuracyPlusMm" | "accuracyMinusMm";
   code: ErrorCode;
   message: string;
 }
 
 /** All intermediate values computed for a single preset, per spec Section 5-6. Populated
- * progressively; fields past the point of failure are left undefined. */
+ * progressively; fields past the point of failure are left undefined. The depth-accuracy stage
+ * (E_design / f_req / E_Z / E_safe) is two-sided: "_plus" tracks the part reading farther than
+ * actual, "_minus" tracks it reading closer than actual. f_req itself stays single-valued --
+ * it's the max of the two per-side candidates, since the stricter bound drives the resolution. */
 export interface PresetComputation {
   W_req?: number;
   H_req?: number;
@@ -85,7 +97,10 @@ export interface PresetComputation {
   Z_near?: number;
   Z_center?: number;
   Z_far?: number;
-  E_design?: number;
+  E_design_plus?: number;
+  E_design_minus?: number;
+  f_req_plus?: number;
+  f_req_minus?: number;
   f_req?: number;
   N_x_req?: number;
   N_y_req?: number;
@@ -93,8 +108,10 @@ export interface PresetComputation {
   d_far?: number;
   Z_low?: number;
   Z_high?: number;
-  E_Z?: number;
-  E_safe?: number;
+  E_Z_plus?: number;
+  E_Z_minus?: number;
+  E_safe_plus?: number;
+  E_safe_minus?: number;
   f_mm?: number;
 }
 
@@ -104,8 +121,13 @@ export interface PresetEvaluation {
   baselineMm: number;
   formulaVersion: string;
   passed: boolean;
+  /** Primary/first violated code, kept for callers that only care about one reason. */
   errorCode?: ErrorCode;
+  /** Combined message text -- two sentences, space-joined, when both accuracy bounds fail at once. */
   errorMessage?: string;
+  /** Every violated code for this failure. Only the depth-accuracy gate can produce more than one
+   * entry (ERR-09a and ERR-09b together); every other gate fails with exactly one code. */
+  errorCodes?: ErrorCode[];
   computation: PresetComputation;
   selectedResolution?: ResolutionConfig;
 }

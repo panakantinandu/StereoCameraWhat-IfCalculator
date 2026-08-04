@@ -10,7 +10,8 @@ const EMPTY_INPUTS: RawCalculatorInputs = {
   partLengthMm: "",
   partWidthMm: "",
   partDepthMm: "",
-  requiredAccuracyMm: "",
+  accuracyPlusMm: "",
+  accuracyMinusMm: "",
 };
 
 const DISCLAIMER =
@@ -21,6 +22,12 @@ const DISCLAIMER =
 function fmt(n: number | undefined, decimals = 1): string {
   if (n === undefined || !Number.isFinite(n)) return "—";
   return n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+/** Formats an asymmetric +/- pair as "+X.XX mm / -Y.YY mm" (OUT-11 / OUT-12). */
+function fmtPlusMinus(plus: number | undefined, minus: number | undefined, decimals = 3): string {
+  if (plus === undefined || minus === undefined || !Number.isFinite(plus) || !Number.isFinite(minus)) return "—";
+  return `+${fmt(plus, decimals)} mm / -${fmt(minus, decimals)} mm`;
 }
 
 function fieldError(errors: FieldError[] | undefined, field: FieldError["field"]): string | undefined {
@@ -108,12 +115,28 @@ function StatusBadge({ status }: { status: CalculationResult["status"] }) {
 
 export default function Page() {
   const [rawInputs, setRawInputs] = useState<RawCalculatorInputs>(EMPTY_INPUTS);
+  const [symmetricTolerance, setSymmetricTolerance] = useState(true);
   const [result, setResult] = useState<CalculationResult | null>(null);
   const [isStale, setIsStale] = useState(false);
 
   function updateField(field: keyof RawCalculatorInputs, value: string) {
     setRawInputs((prev) => ({ ...prev, [field]: value }));
     if (result) setIsStale(true);
+  }
+
+  function updateSymmetricAccuracy(value: string) {
+    setRawInputs((prev) => ({ ...prev, accuracyPlusMm: value, accuracyMinusMm: value }));
+    if (result) setIsStale(true);
+  }
+
+  function toggleSymmetric(next: boolean) {
+    setSymmetricTolerance(next);
+    if (next) {
+      // Re-entering symmetric mode: collapse back to a single value so the one
+      // visible field isn't silently hiding a leftover asymmetric minus value.
+      setRawInputs((prev) => ({ ...prev, accuracyMinusMm: prev.accuracyPlusMm }));
+      if (result) setIsStale(true);
+    }
   }
 
   function handleCalculate() {
@@ -137,7 +160,7 @@ export default function Page() {
       <header className="header">
         <h1>Stereo Camera What-If Calculator</h1>
         <p className="purpose">
-          Preliminary sizing check for machine-vision stereo camera setups against approved engineering presets.
+          Preliminary sizing check for machine-vision stereo camera setups.
         </p>
         <span className="internal-badge">Internal preliminary tool</span>
       </header>
@@ -195,27 +218,85 @@ export default function Page() {
           </div>
 
           <div className="field">
-            <label htmlFor="requiredAccuracyMm">Required Stereo Depth Accuracy (mm)</label>
-            <div className="input-row">
+            <label htmlFor="symmetricTolerance" className="checkbox-label">
               <input
-                id="requiredAccuracyMm"
-                type="number"
-                min="0"
-                className={fieldError(errors, "requiredAccuracyMm") ? "has-error" : ""}
-                value={rawInputs.requiredAccuracyMm}
-                onChange={(e) => updateField("requiredAccuracyMm", e.target.value)}
+                id="symmetricTolerance"
+                type="checkbox"
+                checked={symmetricTolerance}
+                onChange={(e) => toggleSymmetric(e.target.checked)}
               />
-              <span className="unit">mm</span>
-            </div>
-            {fieldError(errors, "requiredAccuracyMm") && (
-              <div className="error-text">{fieldError(errors, "requiredAccuracyMm")}</div>
-            )}
+              Symmetric tolerance
+            </label>
           </div>
+
+          {symmetricTolerance ? (
+            <div className="field">
+              <label htmlFor="accuracySymmetricMm">Required Stereo Depth Accuracy (mm)</label>
+              <div className="input-row">
+                <input
+                  id="accuracySymmetricMm"
+                  type="number"
+                  min="0"
+                  className={
+                    fieldError(errors, "accuracyPlusMm") || fieldError(errors, "accuracyMinusMm") ? "has-error" : ""
+                  }
+                  value={rawInputs.accuracyPlusMm}
+                  onChange={(e) => updateSymmetricAccuracy(e.target.value)}
+                />
+                <span className="unit">mm</span>
+              </div>
+              {(fieldError(errors, "accuracyPlusMm") || fieldError(errors, "accuracyMinusMm")) && (
+                <div className="error-text">
+                  {fieldError(errors, "accuracyPlusMm") ?? fieldError(errors, "accuracyMinusMm")}
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="field">
+                <label htmlFor="accuracyPlusMm">Required Stereo Depth Accuracy (+) (mm)</label>
+                <div className="input-row">
+                  <input
+                    id="accuracyPlusMm"
+                    type="number"
+                    min="0"
+                    className={fieldError(errors, "accuracyPlusMm") ? "has-error" : ""}
+                    value={rawInputs.accuracyPlusMm}
+                    onChange={(e) => updateField("accuracyPlusMm", e.target.value)}
+                  />
+                  <span className="unit">mm</span>
+                </div>
+                {fieldError(errors, "accuracyPlusMm") && (
+                  <div className="error-text">{fieldError(errors, "accuracyPlusMm")}</div>
+                )}
+              </div>
+
+              <div className="field">
+                <label htmlFor="accuracyMinusMm">Required Stereo Depth Accuracy (-) (mm)</label>
+                <div className="input-row">
+                  <input
+                    id="accuracyMinusMm"
+                    type="number"
+                    min="0"
+                    className={fieldError(errors, "accuracyMinusMm") ? "has-error" : ""}
+                    value={rawInputs.accuracyMinusMm}
+                    onChange={(e) => updateField("accuracyMinusMm", e.target.value)}
+                  />
+                  <span className="unit">mm</span>
+                </div>
+                {fieldError(errors, "accuracyMinusMm") && (
+                  <div className="error-text">{fieldError(errors, "accuracyMinusMm")}</div>
+                )}
+              </div>
+            </>
+          )}
 
           <div className="diagram-box" id="orientation-diagram-box" title="Part orientation relative to the left/right stereo cameras">
             <OrientationDiagram />
             <p className="caption">
-              Horizontal, vertical, and depth axes relative to the left (L) and right (R) stereo cameras.
+              Horizontal, vertical, and depth axes relative to the left (L) and right (R) stereo cameras. For depth
+              accuracy: <strong>(+)</strong> is how much the part is allowed to measure FARTHER than actual;{" "}
+              <strong>(-)</strong> is how much it's allowed to measure CLOSER than actual.
             </p>
           </div>
 
@@ -273,10 +354,12 @@ export default function Page() {
                       </div>
                     </div>
                     <div className="result-item">
-                      <div className="label">Predicted / safety-adjusted depth error</div>
-                      <div className="value">
-                        {fmt(c?.E_Z, 3)} / {fmt(c?.E_safe, 3)} mm
-                      </div>
+                      <div className="label">Predicted theoretical depth error</div>
+                      <div className="value">{fmtPlusMinus(c?.E_Z_plus, c?.E_Z_minus)}</div>
+                    </div>
+                    <div className="result-item">
+                      <div className="label">Safety-adjusted depth error</div>
+                      <div className="value">{fmtPlusMinus(c?.E_safe_plus, c?.E_safe_minus)}</div>
                     </div>
                   </div>
                 </>
