@@ -51,4 +51,9 @@ export const RESOLUTIONS: ResolutionConfig[] = [
   resolution("3072 x 2048", 3072, 2048, 4, true),
   // TBD — pending Gary/engineering approval, see spec Section 11.1
   resolution("4096 x 3000", 4096, 3000, 5, true),
+  // TBD placeholder, widened to allow realistic test cases to pass — confirm
+  // real values with engineering. The list topped out at 4096x3000, which is
+  // too small for portrait-oriented parts (needs more vertical pixels) and
+  // for wide framing at longer baselines (needs more horizontal pixels).
+  resolution("6000 x 4000", 6000, 4000, 6, true),
 ];

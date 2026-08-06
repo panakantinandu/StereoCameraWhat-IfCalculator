@@ -28,9 +28,34 @@ UI itself does not warn per-result which config values are placeholders — that
 review has to happen at the code level, by someone reading these two files.
 
 `maxDisparityRangePx` (the disparity-span limit — see "The disparity-range fix"
-below) is currently 128/192/256 for Compact/Standard/Long Baseline, chosen as
+below) is currently 384/448/512 for Compact/Standard/Long Baseline (widened
+from an initial 128/192/256 — see "Placeholder widening" below), chosen as
 round numDisparities-style values, not measured against real hardware. Flag
 this specifically during the Section 11.1 review.
+
+### Placeholder widening (2nd pass)
+
+A real reported case — 70×160×80mm at 0.3mm accuracy — returned NO VALID
+CONFIGURATION even though it's a perfectly reasonable request. Ground-truthed
+with per-preset computation logging before touching anything (see git history
+for the full diagnostic): every preset genuinely failed against the
+placeholder config as it stood, for two independent reasons — (1) this is a
+*portrait*-oriented part (width 160mm > length 70mm), which needed more
+*vertical* resolution than any listed camera had (the list topped out at
+4096×3000), and (2) all three presets' `maxDisparityRangePx` was too tight for
+this accuracy/depth combination. Not a code bug — confirmed by checking the
+same case against the pure calculation engine directly, independent of the UI.
+
+Fixed by widening two placeholder values, both still clearly marked TBD:
+- `maxDisparityRangePx`: 128/192/256 → 384/448/512
+- Added a `6000 x 4000` entry to [`lib/cameraDatabase/resolutions.ts`](lib/cameraDatabase/resolutions.ts)
+
+These are round numbers chosen to comfortably clear the reported case, not
+measured values — do not treat them as more authoritative than any other
+placeholder in this file. A boundary-check test confirms the widening didn't
+turn this into a rubber-stamp PASS machine: a 0.01mm accuracy ask on the same
+part class still correctly returns NO VALID CONFIGURATION (`ERR-06` on all
+three, with the exact required-resolution numbers in the failure).
 
 ## How it works
 

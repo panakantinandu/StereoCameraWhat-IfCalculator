@@ -626,12 +626,15 @@ describe("runCalculation - optional maximum working distance surfaces a specific
   });
 });
 
-describe("real placeholder config (lib/engineering/presets.ts + lib/cameraDatabase) - known reference case", () => {
-  it("250x150x200mm @ 1mm accuracy: Long Baseline passes on the disparity-range fix, Compact/Standard fail ERR-07", () => {
+describe("real placeholder config (lib/engineering/presets.ts + lib/cameraDatabase) - known reference cases", () => {
+  it("250x150x200mm @ 1mm accuracy: all three presets pass, Compact wins on priority", () => {
     // Regression check for the real product config (not the basePreset test
-    // fixture): confirms the disparity-RANGE fix (d_near - d_far vs
-    // maxDisparityRangePx) behaves as verified by hand before the folder
-    // reorganization -- same numbers, moved code.
+    // fixture). maxDisparityRangePx was widened (128/192/256 -> 384/448/512)
+    // and the resolution list gained a 6000x4000 entry to fix a real reported
+    // case (70x160x80mm @ 0.3mm) where every preset failed on a genuinely
+    // too-narrow placeholder config -- not a code bug. That widening also
+    // means this older reference case, which used to differentiate presets on
+    // ERR-07, now passes on all three; Compact wins purely on priority (1).
     const raw: RawCalculatorInputs = {
       partLengthMm: "250",
       partWidthMm: "150",
@@ -643,12 +646,59 @@ describe("real placeholder config (lib/engineering/presets.ts + lib/cameraDataba
     const result = calculate(raw, PRESETS, RESOLUTIONS);
 
     expect(result.status).toBe("PASS");
-    expect(result.recommended?.presetName).toBe("Long Baseline");
+    expect(result.recommended?.presetName).toBe("Compact");
 
     const byName = Object.fromEntries(result.evaluations.map((e) => [e.presetName, e]));
-    expect(byName["Compact"]?.errorCode).toBe("ERR-07");
-    expect(byName["Standard"]?.errorCode).toBe("ERR-07");
+    expect(byName["Compact"]?.passed).toBe(true);
+    expect(byName["Standard"]?.passed).toBe(true);
     expect(byName["Long Baseline"]?.passed).toBe(true);
+  });
+
+  it("70x160x80mm @ 0.3mm accuracy (reported bug case): all three presets now pass", () => {
+    // The exact case reported as NO VALID CONFIGURATION. Ground-truthed via
+    // direct computation first (see commit message): every preset genuinely
+    // failed against the pre-widening config -- Compact/Long Baseline needed
+    // more resolution than the 4096x3000 ceiling (this is a *portrait* part,
+    // width 160mm > length 70mm, so it needed more VERTICAL pixels than any
+    // listed camera had), and all three needed more disparity-range headroom
+    // than 128/192/256 allowed. Confirms the widened config actually fixes
+    // the reported case, not just the old reference case above.
+    const raw: RawCalculatorInputs = {
+      partLengthMm: "70",
+      partWidthMm: "160",
+      partDepthMm: "80",
+      accuracyPlusMm: "0.3",
+      accuracyMinusMm: "0.3",
+      maxWorkingDistanceMm: "",
+    };
+    const result = calculate(raw, PRESETS, RESOLUTIONS);
+
+    expect(result.status).toBe("PASS");
+    const byName = Object.fromEntries(result.evaluations.map((e) => [e.presetName, e]));
+    expect(byName["Compact"]?.passed).toBe(true);
+    expect(byName["Standard"]?.passed).toBe(true);
+    expect(byName["Long Baseline"]?.passed).toBe(true);
+  });
+
+  it("still correctly returns NO VALID CONFIGURATION for a genuinely-impossible request (0.01mm)", () => {
+    // Boundary check: the widening must not have turned this into a
+    // rubber-stamp PASS machine. An absurdly tight accuracy ask should still
+    // fail, with a traceable reason.
+    const raw: RawCalculatorInputs = {
+      partLengthMm: "200",
+      partWidthMm: "150",
+      partDepthMm: "50",
+      accuracyPlusMm: "0.01",
+      accuracyMinusMm: "0.01",
+      maxWorkingDistanceMm: "",
+    };
+    const result = calculate(raw, PRESETS, RESOLUTIONS);
+
+    expect(result.status).toBe("NO VALID CONFIGURATION");
+    for (const e of result.evaluations) {
+      expect(e.passed).toBe(false);
+      expect(e.errorCode).toBe("ERR-06");
+    }
   });
 });
 
